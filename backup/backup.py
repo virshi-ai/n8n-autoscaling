@@ -11,6 +11,7 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from dotenv import load_dotenv
 from croniter import croniter
+import redis
 
 load_dotenv()
 
@@ -26,6 +27,10 @@ POSTGRES_HOST = os.getenv('POSTGRES_HOST', 'postgres')
 POSTGRES_DB = os.getenv('POSTGRES_DB', 'n8n')
 POSTGRES_USER = os.getenv('POSTGRES_USER', 'postgres')
 POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD', '')
+
+REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', '')
 
 BACKUP_SCHEDULE = os.getenv('BACKUP_SCHEDULE', '0 2 * * *')
 BACKUP_RETENTION_DAYS = int(os.getenv('BACKUP_RETENTION_DAYS', '30'))
@@ -44,6 +49,7 @@ SMTP_TO = os.getenv('SMTP_TO', '')
 BACKUP_DIR = Path('/backups')
 N8N_MAIN_DATA = Path('/data/n8n_main')
 N8N_WEBHOOK_DATA = Path('/data/n8n_webhook')
+REDIS_DATA = Path('/data/redis')
 SUBPROCESS_TIMEOUT = 600  # 10 minutes for large backups
 
 
@@ -70,6 +76,52 @@ def run_pg_dump(output_path):
     logging.info(f"PostgreSQL backup complete: {output_path.name} ({size_mb:.1f} MB)")
 
 
+def run_redis_backup(output_path):
+    """Triggers a Redis BGSAVE and copies the resulting RDB dump."""
+    logging.info("Starting Redis backup...")
+    try:
+        r = redis.Redis(
+            host=REDIS_HOST, port=REDIS_PORT,
+            password=REDIS_PASSWORD or None, decode_responses=True
+        )
+        r.ping()
+
+        # Record the last save time before triggering a new one
+        last_save = r.lastsave()
+
+        # Trigger background save
+        r.bgsave()
+        logging.info("Redis BGSAVE triggered, waiting for completion...")
+
+        # Poll until save completes (up to 5 minutes)
+        timeout = 300
+        start = time.time()
+        while time.time() - start < timeout:
+            current_save = r.lastsave()
+            if current_save > last_save:
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError("Redis BGSAVE timed out after 5 minutes")
+
+        # Copy the dump.rdb from the mounted volume
+        rdb_path = REDIS_DATA / 'dump.rdb'
+        if rdb_path.exists():
+            import gzip
+            with open(rdb_path, 'rb') as f_in:
+                with gzip.open(str(output_path), 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            size_mb = output_path.stat().st_size / (1024 * 1024)
+            logging.info(f"Redis backup complete: {output_path.name} ({size_mb:.1f} MB)")
+        else:
+            logging.warning("Redis dump.rdb not found at mounted volume, skipping Redis backup")
+
+    except redis.exceptions.ConnectionError as e:
+        logging.warning(f"Could not connect to Redis for backup (non-fatal): {e}")
+    except Exception as e:
+        logging.warning(f"Redis backup failed (non-fatal): {e}")
+
+
 def tar_volume_data(output_path, data_paths):
     """Creates a compressed tar archive of n8n volume data."""
     logging.info("Archiving n8n volume data...")
@@ -85,14 +137,16 @@ def tar_volume_data(output_path, data_paths):
     logging.info(f"Volume archive complete: {output_path.name} ({size_mb:.1f} MB)")
 
 
-def create_final_archive(timestamp, pg_dump_path, volumes_path):
-    """Bundles the pg_dump and volume archive into a single archive."""
+def create_final_archive(timestamp, pg_dump_path, volumes_path, redis_dump_path=None):
+    """Bundles the pg_dump, volume archive, and optional Redis dump into a single archive."""
     archive_name = f"n8n-backup-{timestamp}.tar.gz"
     archive_path = BACKUP_DIR / archive_name
 
     with tarfile.open(archive_path, 'w:gz') as tar:
         tar.add(str(pg_dump_path), arcname=pg_dump_path.name)
         tar.add(str(volumes_path), arcname=volumes_path.name)
+        if redis_dump_path and redis_dump_path.exists():
+            tar.add(str(redis_dump_path), arcname=redis_dump_path.name)
 
     size_mb = archive_path.stat().st_size / (1024 * 1024)
     logging.info(f"Final archive: {archive_name} ({size_mb:.1f} MB)")
@@ -244,27 +298,31 @@ def run_backup():
         pg_dump_path = work_dir / 'database.dump'
         run_pg_dump(pg_dump_path)
 
-        # Step 2: Archive n8n volume data
+        # Step 2: Redis backup
+        redis_dump_path = work_dir / 'redis.rdb.gz'
+        run_redis_backup(redis_dump_path)
+
+        # Step 3: Archive n8n volume data
         volumes_path = work_dir / 'volumes.tar.gz'
         tar_volume_data(volumes_path, [N8N_MAIN_DATA, N8N_WEBHOOK_DATA])
 
-        # Step 3: Create final archive
-        archive_path = create_final_archive(timestamp, pg_dump_path, volumes_path)
+        # Step 4: Create final archive
+        archive_path = create_final_archive(timestamp, pg_dump_path, volumes_path, redis_dump_path)
 
-        # Step 4: Encrypt if configured
+        # Step 5: Encrypt if configured
         final_path = encrypt_archive(archive_path)
 
-        # Step 5: Upload to remote destinations
+        # Step 6: Upload to remote destinations
         upload_to_destinations(final_path)
 
         size_mb = final_path.stat().st_size / (1024 * 1024)
 
-        # Step 6: Delete local copy after successful upload if configured
+        # Step 7: Delete local copy after successful upload if configured
         if BACKUP_DELETE_LOCAL_AFTER_UPLOAD and BACKUP_RCLONE_DESTINATIONS:
             final_path.unlink()
             logging.info("Local backup deleted after successful remote upload.")
 
-        # Step 7: Cleanup old backups
+        # Step 8: Cleanup old backups
         cleanup_old_backups()
         cleanup_remote_backups()
         send_notification(

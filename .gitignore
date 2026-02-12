@@ -1,4 +1,38 @@
-# .gitignore
+# Environment and secrets
 .env
+.env.*
+
+# Claude Code
 .claude/
+
+# Backup credentials
 backup/rclone.conf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+
+# Node.js
+node_modules/
+
+# Data directories (created at runtime)
+Data/
+Logs/
+backups/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated systemd service files
+*.service
