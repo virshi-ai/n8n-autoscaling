@@ -15,7 +15,7 @@ Simple install, just clone the files + docker compose up
 n8n 2.0 introduced breaking changes for task runners:
 - Task runners are now **separate containers** (external mode)
 - Each worker needs its own task runner sidecar
-- The main n8n instance exposes a task broker on port 5679
+- The main n8n instance does not need a task runner since all executions are offloaded to workers
 - External packages must be configured in the task runner image
 
 This build handles all of this automatically - the autoscaler scales both workers and their task runners together.
@@ -25,7 +25,6 @@ This build handles all of this automatically - the autoscaler scales both worker
 ```mermaid
 graph TD
     A[n8n Main] -->|Queues jobs| B[Redis]
-    A -->|Task Broker :5679| TR1[Task Runner Main]
     B -->|Monitors queue| C[Autoscaler]
     C -->|Scales together| D[n8n Workers]
     C -->|Scales together| TR2[Task Runner Workers]
@@ -41,7 +40,6 @@ graph TD
 | Service | Description |
 |---------|-------------|
 | `n8n` | Main n8n instance (editor, API) |
-| `n8n-task-runner` | Task runner for main instance |
 | `n8n-webhook` | Dedicated webhook processor |
 | `n8n-worker` | Queue workers (autoscaled) |
 | `n8n-worker-runner` | Task runners for workers (autoscaled 1:1 with workers) |
@@ -51,6 +49,8 @@ graph TD
 | `redis-monitor` | Queue monitoring |
 | `n8n-backup` | Scheduled backups to cloud storage (optional) |
 | `cloudflared` | Cloudflare tunnel |
+
+> **Note:** The main n8n instance does not need its own task runner because all executions (including manual runs) are offloaded to workers via `OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true`. Each worker has its own task runner sidecar.
 
 ## Features
 
@@ -296,7 +296,7 @@ To add additional npm packages for JavaScript Code nodes:
 
 3. Rebuild:
    ```bash
-   docker compose build --no-cache n8n-task-runner n8n-worker-runner
+   docker compose build --no-cache n8n-worker-runner
    docker compose up -d
    ```
 
@@ -326,7 +326,7 @@ To add additional pip packages for Python Code nodes:
 
 4. Rebuild:
    ```bash
-   docker compose build --no-cache n8n-task-runner n8n-worker-runner
+   docker compose build --no-cache n8n-worker-runner
    docker compose up -d
    ```
 
@@ -355,7 +355,7 @@ To add command-line tools (like ImageMagick, tesseract, poppler, etc.):
 
 3. Rebuild:
    ```bash
-   docker compose build --no-cache n8n-task-runner n8n-worker-runner
+   docker compose build --no-cache n8n-worker-runner
    docker compose up -d
    ```
 
@@ -414,7 +414,7 @@ docker compose logs -f
 docker compose logs -f n8n-autoscaler
 
 # Task runners
-docker compose logs -f n8n-task-runner n8n-worker-runner
+docker compose logs -f n8n-worker-runner
 ```
 
 ## Backup Configuration
@@ -550,14 +550,9 @@ docker compose exec redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" LLEN 
 ```
 
 ### Task runner issues
-If Code nodes fail, check task runner logs:
+If Code nodes fail, check worker task runner logs:
 ```bash
-docker compose logs n8n-task-runner
-```
-
-Verify the task broker is accessible:
-```bash
-docker compose exec n8n-task-runner wget -qO- http://n8n:5679/health || echo "Not reachable"
+docker compose logs n8n-worker-runner
 ```
 
 ### Webhook URL format

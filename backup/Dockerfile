@@ -1,5 +1,5 @@
 # Stage 1: Builder - install rclone, pg_dump client, gpg
-FROM alpine:3.20 AS builder
+FROM alpine:3.21 AS builder
 
 RUN apk add --no-cache \
     rclone \

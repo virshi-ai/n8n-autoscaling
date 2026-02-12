@@ -148,7 +148,6 @@ services:
     <<: *service-n8n
     ports:
       - "${TAILSCALE_IP:-127.0.0.1}:5678:5678"
-      - "${TAILSCALE_IP:-127.0.0.1}:5679:5679"
     volumes:
       - n8n_main:/n8n
     depends_on:
@@ -166,28 +165,8 @@ services:
       retries: 10
       start_period: 60s
 
-  # Task runner for main n8n instance (n8n 2.0 requirement)
-  n8n-task-runner:
-    <<: *service-task-runner
-    environment:
-      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
-      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
-      - N8N_RUNNERS_MAX_CONCURRENCY=${N8N_RUNNERS_MAX_CONCURRENCY}
-      - N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT=${N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT}
-      - NODE_FUNCTION_ALLOW_EXTERNAL=${NODE_FUNCTION_ALLOW_EXTERNAL:-}
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-      - PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
-      - N8N_RUNNERS_ALLOW_PROTOTYPE_MUTATION=true
-      - N8N_RUNNERS_INSECURE_MODE=true
-    depends_on:
-      n8n:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'node.*runner' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+  # No task runner needed for main instance - all executions are offloaded to workers
+  # (OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true)
 
   n8n-webhook:
     <<: *service-n8n
