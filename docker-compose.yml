@@ -329,7 +329,7 @@ services:
       - N8N_WORKER_SERVICE_NAME=${N8N_WORKER_SERVICE_NAME} # Service name in this docker-compose file
       - N8N_WORKER_RUNNER_SERVICE_NAME=${N8N_WORKER_RUNNER_SERVICE_NAME} # Task runner sidecar (n8n 2.0)
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME} # Crucial: Should match your project name
-      - COMPOSE_FILE_PATH=/app/docker-compose.yaml # Path to compose file in mounted project
+      - COMPOSE_FILE_PATH=/app/docker-compose.yml # Path to compose file in mounted project
       - MIN_REPLICAS=${MIN_REPLICAS}
       - MAX_REPLICAS=${MAX_REPLICAS} # Adjust as needed
       - SCALE_UP_QUEUE_THRESHOLD=${SCALE_UP_QUEUE_THRESHOLD} # Scale up if queue length > 5
